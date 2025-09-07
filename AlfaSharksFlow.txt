@@ -1,0 +1,233 @@
+/////////////////////////////////////////////
+/////////////////////////////////////////////
+/////////////////////////////////////////////
+////// =============================== //////
+////// =============================== //////
+////// =============================== //////
+////// =============================== //////
+////// =============================== //////
+////// ALFA SHARKS FLOW ROBÔ OFICIAL   //////
+////// ATUALIZAÇÃO 2.0 NTFL 08/2025    //////
+////// DESENVOLVIDO POR SPERB TRADER   //////
+////// TODOS OS DIREITOS RESERVADOS    //////
+////// =============================== //////
+////// =============================== //////
+////// =============================== //////
+////// =============================== //////
+////// =============================== //////
+/////////////////////////////////////////////
+/////////////////////////////////////////////
+/////////////////////////////////////////////
+
+PARAMETRO
+nContratos(2);
+ContratosParcial(1);
+AlvoFinalTR(4);
+ParcialTR(2);
+StopTR(2);
+StopMaxTicks(40);
+TicksTrailing(40);
+LimitePerdaDia(-150);
+HoraInicio(0900);
+HoraFim(1500);
+OffSetEntrada(0);
+OffSetSaida(30);
+periodoHilo(34);  
+
+VAR
+periodoMedia, periodoIFR : Inteiro;
+compraIFR, vendaIFR : Inteiro;
+precoAlvo, precoStop, precoParcial : Real;
+sinalCompra, sinalVenda : Booleano;
+cor : Inteiro;
+stopCalculado, stopMaximo : Real;
+entradaExecutada: Booleano;
+parcialExecutada: Booleano;
+trueRange, dirHilo: Float;
+prejuizoDiario : Float;
+limiteDiarioAtingido : Booleano;
+melhorPreco: Real;       
+
+INICIO
+periodoMedia := 34;
+periodoIFR   := 13;
+compraIFR    := 48;
+vendaIFR     := 52;
+
+// RESET DE VALORES QUANDO A POSIÇÃO É ENCERRADA
+se (nao HasPosition) entao
+inicio
+  precoAlvo := 0;
+  precoStop := 0;
+  precoParcial := 0;
+  entradaExecutada := falso;
+  parcialExecutada := falso;
+  melhorPreco := 0;
+fim;
+
+// VERIFICA PREJUÍZO ACUMULADO DO DIA
+prejuizoDiario := DailyResult;
+se (prejuizoDiario <= LimitePerdaDia) entao
+  limiteDiarioAtingido := verdadeiro
+senao
+  limiteDiarioAtingido := falso;
+
+// INDICADORES
+trueRange := AvgTrueRange(10,0);
+dirHilo := HiloActivator(periodoHilo)|1|;
+
+// SINAIS DE ENTRADA
+sinalCompra := (Abertura >= MediaExp(periodoMedia,Close)) e (Fechamento >= MediaExp(periodoMedia,Close)) e (IFR(periodoIFR) >= compraIFR) e (dirHilo = 1);
+sinalVenda := (Abertura <= MediaExp(periodoMedia,Close)) e (Fechamento <= MediaExp(periodoMedia,Close)) e (IFR(periodoIFR) <= vendaIFR) e (dirHilo = 0);
+
+// REGRAS DE EXECUÇÃO DE ENTRADA
+se (nao HasPosition) e (sinalCompra) e (Time >= HoraInicio) e (Time < HoraFim) e (nao limiteDiarioAtingido) entao
+  BuyStop(maxima+MinPriceIncrement, maxima+MinPriceIncrement+(OffSetEntrada*MinPriceIncrement), nContratos)
+senao se (nao HasPosition) e (sinalVenda) e (Time >= HoraInicio) e (Time < HoraFim) e (nao limiteDiarioAtingido) entao
+  SellShortStop(minima-MinPriceIncrement, minima-MinPriceIncrement-(OffSetSaida*MinPriceIncrement), nContratos);
+
+// ===============================
+// GERENCIAMENTO DE POSIÇÃO
+// ===============================
+se (IsBought) entao
+inicio
+  // Primeira entrada
+  se (nao entradaExecutada) entao
+  inicio
+    stopCalculado := trueRange * StopTR;
+    stopMaximo := StopMaxTicks * MinPriceIncrement;
+    se (stopCalculado > stopMaximo) entao
+      stopCalculado := stopMaximo;
+
+    precoAlvo := BuyPrice + (trueRange * AlvoFinalTR);
+    precoStop := BuyPrice - stopCalculado;
+    precoParcial := BuyPrice + (trueRange * ParcialTR);
+    melhorPreco := BuyPrice; 
+
+    SellToCoverLimit(precoParcial, contratosParcial);
+    SellToCoverStop(precoStop, precoStop - (OffSetSaida * MinPriceIncrement), nContratos);
+
+    entradaExecutada := verdadeiro;
+    parcialExecutada := falso;
+  fim;
+
+  // TRAILING STOP PARA COMPRA (APÓS A PARCIAL)
+  se (parcialExecutada) entao
+  inicio
+    // Atualiza melhor preço APÓS a parcial
+    se (Fechamento > melhorPreco) entao
+      melhorPreco := Fechamento;
+
+    // Aplica trailing stop apenas se já tivermos feito a parcial
+    se (melhorPreco - (TicksTrailing * MinPriceIncrement) > precoStop) entao
+    inicio
+      precoStop := melhorPreco - (TicksTrailing * MinPriceIncrement);
+      CancelPendingOrders;
+      SellToCoverLimit(precoAlvo, Position);
+      SellToCoverStop(precoStop, precoStop - (OffSetSaida * MinPriceIncrement), Position);
+    fim;
+  fim;
+
+  // Quando a parcial for de fato executada
+  se (Position = (nContratos - contratosParcial)) e (nao parcialExecutada) entao
+  inicio
+    precoStop := BuyPrice; // Stop no preço de entrada (ZERO ZERO)
+    melhorPreco := BuyPrice; // Reinicia o trailing a partir do preço de entrada
+    CancelPendingOrders;
+    SellToCoverLimit(precoAlvo, nContratos - contratosParcial);
+    SellToCoverStop(precoStop, precoStop - (OffSetSaida * MinPriceIncrement), nContratos - contratosParcial);
+    parcialExecutada := verdadeiro;
+  fim;
+
+  // Garantia contínua: enquanto parcial já tiver rodado, sempre mantém ordens no book
+  se (parcialExecutada) entao
+  inicio
+    SellToCoverLimit(precoAlvo, Position);
+    SellToCoverStop(precoStop, precoStop - (OffSetSaida * MinPriceIncrement), Position);
+  fim;
+fim
+
+senao se (IsSold) entao
+inicio
+  // Primeira entrada
+  se (nao entradaExecutada) entao
+  inicio
+    stopCalculado := trueRange * StopTR;
+    stopMaximo := StopMaxTicks * MinPriceIncrement;
+    se (stopCalculado > stopMaximo) entao
+      stopCalculado := stopMaximo;
+
+    precoAlvo := SellPrice - (trueRange * AlvoFinalTR);
+    precoStop := SellPrice + stopCalculado;
+    precoParcial := SellPrice - (trueRange * ParcialTR);
+    melhorPreco := SellPrice; // Inicializa o melhor preço para trailing
+
+    BuyToCoverLimit(precoParcial, contratosParcial);
+    BuyToCoverStop(precoStop, precoStop + (OffSetSaida * MinPriceIncrement), nContratos);
+
+    entradaExecutada := verdadeiro;
+    parcialExecutada := falso;
+  fim;
+
+  // TRAILING STOP PARA VENDA (APÓS A PARCIAL)
+  se (parcialExecutada) entao
+  inicio
+    // Atualiza melhor preço APÓS a parcial
+    se (Fechamento < melhorPreco) entao
+      melhorPreco := Fechamento;
+
+    // Aplica trailing stop apenas se já tivermos feito a parcial
+    se (melhorPreco + (TicksTrailing * MinPriceIncrement) < precoStop) entao
+    inicio
+      precoStop := melhorPreco + (TicksTrailing * MinPriceIncrement);
+      CancelPendingOrders;
+      BuyToCoverLimit(precoAlvo, -Position);
+      BuyToCoverStop(precoStop, precoStop + (OffSetSaida * MinPriceIncrement), -Position);
+    fim;
+  fim;
+
+  // Quando a parcial for de fato executada
+  se (Position = -(nContratos - contratosParcial)) e (nao parcialExecutada) entao
+  inicio
+    precoStop := SellPrice; // Stop no preço de entrada (ZERO ZERO)
+    melhorPreco := SellPrice; // Reinicia o trailing a partir do preço de entrada
+    CancelPendingOrders;
+    BuyToCoverLimit(precoAlvo, nContratos - contratosParcial);
+    BuyToCoverStop(precoStop, precoStop + (OffSetSaida * MinPriceIncrement), nContratos - contratosParcial);
+    parcialExecutada := verdadeiro;
+  fim;
+
+  // Garantia contínua
+  se (parcialExecutada) entao
+  inicio
+    BuyToCoverLimit(precoAlvo, -Position);
+    BuyToCoverStop(precoStop, precoStop + (OffSetSaida * MinPriceIncrement), -Position);
+  fim;
+fim;
+
+// ===============================
+// ZERAGENS DE SEGURANÇA
+// ===============================
+se (Fechamento > BuyPrice) e (IsBought) e (nao sinalCompra) entao
+  ClosePosition;
+se (Fechamento < SellPrice) e (IsSold) e (nao sinalVenda) entao
+  ClosePosition;
+
+se (IsBought) e (Fechamento < precoStop) e (Volume > 0) entao
+  ClosePosition;
+se (IsSold) e (Fechamento > precoStop) e (Volume > 0) entao
+  ClosePosition;
+
+// ===============================
+// COLORAÇÃO
+// ===============================
+se sinalCompra entao
+  cor := clVerde
+senao se sinalVenda entao
+  cor := clVermelho
+senao
+  cor := clBranco;
+
+PaintBar(cor);
+
+FIM
