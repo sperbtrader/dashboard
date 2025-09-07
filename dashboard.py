@@ -252,7 +252,7 @@ class FlowDashboard:
 
 def main():
     # Configuração do caminho do arquivo
-    file_path = r"C:\Users\Sperb Trader\Desktop\Alfa Sharks Flow\planilhafluxo_PROCESSADO_COMPLETO.xlsx"
+    file_path = "planilhafluxo_PROCESSADO_COMPLETO.xlsx"
     
     # Verificar se o arquivo existe
     if not os.path.exists(file_path):
