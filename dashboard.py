@@ -252,7 +252,7 @@ class FlowDashboard:
 
 def main():
     # Configuração do caminho do arquivo
-    file_path = "planilhafluxo_PROCESSADO_COMPLETO.xlsx"
+    file_path = "planilhafluxoWINFUT.xlsx"
     
     # Verificar se o arquivo existe
     if not os.path.exists(file_path):
